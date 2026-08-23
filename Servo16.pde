@@ -40,7 +40,6 @@ MIT License
  * - Configurable cooldown period
  * - PIR enable/disable control
  * - Visual motion detection indicator
- * - Added LED control 8/23/2026
  */
 
 import processing.serial.*;
@@ -129,7 +128,7 @@ final int LED_MODE_STEADY = 1;
 final int LED_MODE_BLINK = 2;
 int ledMode = LED_MODE_OFF;
 boolean ledBlinkState = false;
-boolean ledBlinkInverted = false;  // false: off, then flash on. true: on, then flicker off.
+boolean ledBlinkInverted = true;  // false: off, then flash on. true: on, then flicker off.
 int nextBlinkToggleTime = 0;
 final int BLINK_ON_MIN = 60;     // ms - shortest "eye is lit" flash duration
 final int BLINK_ON_MAX = 150;    // ms - longest flash duration
@@ -306,7 +305,7 @@ void draw() {
   text("Servo16 + PIR", WINDOW_WIDTH - 700, 15);
   textSize(16);
   textAlign(RIGHT, TOP);
-  text("Webrobotix 2025", WINDOW_WIDTH -350,860);
+  text("Webrobotix 2025", WINDOW_WIDTH - 5, 780);
 
   if (millis() - lastConnectionCheck > CONNECTION_CHECK_INTERVAL) {
     checkForNewSerialPorts();
@@ -2222,7 +2221,7 @@ void createUI() {
   ledOffButton = new Button(1230, 730, 75, 32, "Off", color(230));
   ledSteadyButton = new Button(1315, 730, 75, 32, "Steady", LED_BUTTON_COLOR);
   ledBlinkButton = new Button(1400, 730, 75, 32, "Blink", LED_BUTTON_COLOR);
-  ledInvertButton = new Button(1230, 766, 245, 30, "Invert Blink: OFF", color(230));
+  ledInvertButton = new Button(1230, 766, 245, 30, "Invert Blink: ON", color(255, 180, 80));
 }
 
 void drawServoControl(int servoNum) {
