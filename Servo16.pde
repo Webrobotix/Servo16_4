@@ -40,6 +40,7 @@ MIT License
  * - Configurable cooldown period
  * - PIR enable/disable control
  * - Visual motion detection indicator
+ * - Added LED control 8/23/2026
  */
 
 import processing.serial.*;
@@ -123,16 +124,25 @@ int lastPirStatusRequest = 0;
 final int PIR_STATUS_REQUEST_INTERVAL = 2000;
 
 // LED Blink variables
-boolean ledBlinkEnabled = false;
+final int LED_MODE_OFF = 0;
+final int LED_MODE_STEADY = 1;
+final int LED_MODE_BLINK = 2;
+int ledMode = LED_MODE_OFF;
 boolean ledBlinkState = false;
+boolean ledBlinkInverted = false;  // false: off, then flash on. true: on, then flicker off.
 int nextBlinkToggleTime = 0;
 final int BLINK_ON_MIN = 60;     // ms - shortest "eye is lit" flash duration
 final int BLINK_ON_MAX = 150;    // ms - longest flash duration
 final int BLINK_PAUSE_MIN = 1500; // ms - shortest rest between blinks
 final int BLINK_PAUSE_MAX = 4000; // ms - longest rest between blinks
-int ledDataPin = 13;
-int ledDataPin2 = 12;
+int ledDataPin = 10;
+int ledDataPin2 = 11;
+int ledBrightness = 255;   // 0-255, shared by both LEDs
+Button ledOffButton;
+Button ledSteadyButton;
 Button ledBlinkButton;
+Button ledInvertButton;
+Slider ledBrightnessSlider;
 
 // Data pin editing (shared dialog for both PIR and LED pins)
 boolean isEditingPin = false;
@@ -259,7 +269,7 @@ class ServoKeyframe {
 }
 
 void setup() {
-  size(1440, 800);
+  size(1550, 880);
   smooth();
   surface.setTitle("16-Channel RC Servo Controller with PIR");
 
@@ -296,7 +306,7 @@ void draw() {
   text("Servo16 + PIR", WINDOW_WIDTH - 700, 15);
   textSize(16);
   textAlign(RIGHT, TOP);
-  text("Webrobotix 2025", WINDOW_WIDTH - 5, 780);
+  text("Webrobotix 2025", WINDOW_WIDTH -350,860);
 
   if (millis() - lastConnectionCheck > CONNECTION_CHECK_INTERVAL) {
     checkForNewSerialPorts();
@@ -462,10 +472,10 @@ void setPIRDataPin(int pin) {
 }
 
 void drawLEDPanel() {
-  // LED Blink Control Panel (placed beside the PIR panel)
+  // LED Mode Control Panel (placed beside the PIR panel)
   fill(230);
   stroke(150);
-  rect(1220, 600, 200, 160);
+  rect(1220, 600, 270, 215);
 
   fill(TEXT_COLOR);
   textAlign(LEFT, TOP);
@@ -473,7 +483,8 @@ void drawLEDPanel() {
   text("LED", 1230, 610);
 
   textSize(14);
-  text("Status: " + (ledBlinkEnabled ? "BLINKING" : "OFF"), 1230, 635);
+  String modeLabel = ledMode == LED_MODE_STEADY ? "STEADY" : (ledMode == LED_MODE_BLINK ? "BLINKING" : "OFF");
+  text("Status: " + modeLabel, 1230, 635);
 
   fill(0, 0, 200);
   textSize(12);
@@ -481,37 +492,84 @@ void drawLEDPanel() {
   text("Pin 2: " + ledDataPin2 + "  (click to edit)", 1230, 671);
   fill(TEXT_COLOR);
 
+  if (!isPwmPin(ledDataPin) || !isPwmPin(ledDataPin2)) {
+    fill(200, 60, 40);
+    textSize(9);
+    text("No PWM on pin " + (!isPwmPin(ledDataPin) ? ledDataPin : ledDataPin2) + " - brightness = on/off only", 1230, 686);
+    fill(TEXT_COLOR);
+  }
+
+  textSize(11);
+  text("Brightness:", 1230, 705);
+  ledBrightnessSlider.display(true, false);
+  text(int(ledBrightnessSlider.getValue()) + "", 1470, 705);
+
+  // Mode buttons - highlight whichever mode is currently active
+  ledOffButton.buttonColor = (ledMode == LED_MODE_OFF) ? color(200, 200, 200) : color(230);
+  ledOffButton.display();
+
+  ledSteadyButton.buttonColor = (ledMode == LED_MODE_STEADY) ? color(100, 255, 100) : LED_BUTTON_COLOR;
+  ledSteadyButton.display();
+
   // Blink button flickers between two colors itself while active, for a quick visual cue
-  if (ledBlinkEnabled) {
+  if (ledMode == LED_MODE_BLINK) {
     ledBlinkButton.buttonColor = ledBlinkState ? color(255, 255, 0) : color(200, 200, 0);
-    ledBlinkButton.label = "Stop";
   } else {
     ledBlinkButton.buttonColor = LED_BUTTON_COLOR;
-    ledBlinkButton.label = "Blink";
   }
   ledBlinkButton.display();
+
+  ledInvertButton.label = "Invert Blink: " + (ledBlinkInverted ? "ON" : "OFF");
+  ledInvertButton.buttonColor = ledBlinkInverted ? color(255, 180, 80) : color(230);
+  ledInvertButton.display();
 }
 
-void setLEDBlink(boolean enable) {
-  ledBlinkEnabled = enable;
-  sequenceStatus = "LED blink " + (enable ? "started" : "stopped");
-  sequenceStatusTime = millis();
+void setLEDMode(int mode) {
+  ledMode = mode;
 
-  if (enable) {
+  if (mode == LED_MODE_OFF) {
+    sequenceStatus = "LED off";
     ledBlinkState = false;
     if (connected) {
       arduinoPort.write("LED:OFF\n");
       arduinoPort.write("LED2:OFF\n");
     }
+  } else if (mode == LED_MODE_STEADY) {
+    sequenceStatus = "LED steady on";
+    ledBlinkState = false;
+    if (connected) {
+      arduinoPort.write("LED:ON\n");
+      arduinoPort.write("LED2:ON\n");
+    }
+  } else if (mode == LED_MODE_BLINK) {
+    sequenceStatus = "LED random blink started" + (ledBlinkInverted ? " (inverted)" : "");
+    // Start in the resting state: off normally, or on if inverted
+    ledBlinkState = ledBlinkInverted;
+    if (connected) {
+      String cmd = ledBlinkState ? "LED:ON\n" : "LED:OFF\n";
+      String cmd2 = ledBlinkState ? "LED2:ON\n" : "LED2:OFF\n";
+      arduinoPort.write(cmd);
+      arduinoPort.write(cmd2);
+    }
     nextBlinkToggleTime = millis() + int(random(BLINK_PAUSE_MIN, BLINK_PAUSE_MAX));
-  } else if (connected) {
-    arduinoPort.write("LED:OFF\n");
-    arduinoPort.write("LED2:OFF\n");
+  }
+
+  sequenceStatusTime = millis();
+}
+
+void setLEDBlinkInverted(boolean invert) {
+  ledBlinkInverted = invert;
+  sequenceStatus = invert ? "LED blink inverted: on, then flicker off" : "LED blink normal: off, then flash on";
+  sequenceStatusTime = millis();
+
+  // If blink is already running, restart the cycle now so the change is immediate
+  if (ledMode == LED_MODE_BLINK) {
+    setLEDMode(LED_MODE_BLINK);
   }
 }
 
 void updateLEDBlink() {
-  if (!ledBlinkEnabled) return;
+  if (ledMode != LED_MODE_BLINK) return;
 
   if (millis() >= nextBlinkToggleTime) {
     ledBlinkState = !ledBlinkState;
@@ -521,8 +579,10 @@ void updateLEDBlink() {
       arduinoPort.write(cmd);
       arduinoPort.write(cmd2);
     }
-    // A quick flash when the LED just turned on, a longer rest once it's off again
-    if (ledBlinkState) {
+    // A quick flash/flicker on the "active" side, a longer rest on the "resting" side.
+    // Normal mode: ON is the short phase. Inverted mode: OFF is the short phase.
+    boolean isShortPhase = (ledBlinkState != ledBlinkInverted);
+    if (isShortPhase) {
       nextBlinkToggleTime = millis() + int(random(BLINK_ON_MIN, BLINK_ON_MAX));
     } else {
       nextBlinkToggleTime = millis() + int(random(BLINK_PAUSE_MIN, BLINK_PAUSE_MAX));
@@ -532,7 +592,7 @@ void updateLEDBlink() {
 
 void setLEDDataPin(int pin) {
   ledDataPin = pin;
-  String warning = getPinWarning(pin);
+  String warning = getLedPinWarning(pin);
   sequenceStatus = warning.equals("") ? "LED pin 1 set to " + pin : "LED pin 1 (" + pin + ") - " + warning;
   sequenceStatusTime = millis();
   if (connected) {
@@ -542,11 +602,21 @@ void setLEDDataPin(int pin) {
 
 void setLEDDataPin2(int pin) {
   ledDataPin2 = pin;
-  String warning = getPinWarning(pin);
+  String warning = getLedPinWarning(pin);
   sequenceStatus = warning.equals("") ? "LED pin 2 set to " + pin : "LED pin 2 (" + pin + ") - " + warning;
   sequenceStatusTime = millis();
   if (connected) {
     arduinoPort.write("LED2:PIN:" + pin + "\n");
+  }
+}
+
+void setLEDBrightness(int brightness) {
+  ledBrightness = constrain(brightness, 0, 255);
+  sequenceStatus = "LED brightness set to " + ledBrightness;
+  sequenceStatusTime = millis();
+  if (connected) {
+    arduinoPort.write("LED:BRIGHTNESS:" + ledBrightness + "\n");
+    arduinoPort.write("LED2:BRIGHTNESS:" + ledBrightness + "\n");
   }
 }
 
@@ -577,6 +647,21 @@ String getPinWarning(int pin) {
   }
   if (pin == 20 || pin == 21) {
     return "Warning: pin " + pin + " is I2C (SDA/SCL) on Mega - avoid it with the PWM shield";
+  }
+  return "";
+}
+
+// Uno/Nano PWM-capable digital pins. Only these give true analogWrite() brightness control;
+// on any other pin the Arduino core just thresholds the value to on/off.
+boolean isPwmPin(int pin) {
+  return pin == 3 || pin == 5 || pin == 6 || pin == 9 || pin == 10 || pin == 11;
+}
+
+String getLedPinWarning(int pin) {
+  String base = getPinWarning(pin);
+  if (!base.equals("")) return base;
+  if (!isPwmPin(pin)) {
+    return "Note: pin " + pin + " has no hardware PWM (Uno) - brightness will act as on/off only";
   }
   return "";
 }
@@ -719,8 +804,20 @@ void mousePressed() {
   }
 
   // LED controls
+  if (ledOffButton.isOver()) {
+    setLEDMode(LED_MODE_OFF);
+    return;
+  }
+  if (ledSteadyButton.isOver()) {
+    setLEDMode(LED_MODE_STEADY);
+    return;
+  }
   if (ledBlinkButton.isOver()) {
-    setLEDBlink(!ledBlinkEnabled);
+    setLEDMode(LED_MODE_BLINK);
+    return;
+  }
+  if (ledInvertButton.isOver()) {
+    setLEDBlinkInverted(!ledBlinkInverted);
     return;
   }
   if (mouseX >= 1230 && mouseX <= 1400 && mouseY >= 647 && mouseY <= 665) {
@@ -729,6 +826,10 @@ void mousePressed() {
   }
   if (mouseX >= 1230 && mouseX <= 1400 && mouseY >= 665 && mouseY <= 683) {
     startPinEdit("LED2");
+    return;
+  }
+  if (ledBrightnessSlider.isOver()) {
+    ledBrightnessSlider.locked = true;
     return;
   }
 
@@ -843,6 +944,12 @@ void mouseReleased() {
     setPIRCooldown(int(pirCooldownSlider.getValue()));
   }
   pirCooldownSlider.locked = false;
+
+  // Update LED brightness if the slider was dragged (applies to both LEDs)
+  if (ledBrightnessSlider.locked) {
+    setLEDBrightness(int(ledBrightnessSlider.getValue()));
+  }
+  ledBrightnessSlider.locked = false;
 }
 
 void mouseDragged() {
@@ -861,6 +968,9 @@ void mouseDragged() {
   }
   if (pirCooldownSlider.locked) {
     pirCooldownSlider.updatePosition(mouseX);
+  }
+  if (ledBrightnessSlider.locked) {
+    ledBrightnessSlider.updatePosition(mouseX);
   }
 }
 
@@ -1660,6 +1770,20 @@ void readSerialData() {
           pirEnabled = false;
         } else if (data.startsWith("PIR:COOLDOWN:")) {
           pirCooldownPeriod = int(data.substring(13));
+        } else if (data.startsWith("LED:BRIGHTNESS:")) {
+          ledBrightness = int(data.substring(15));
+          if (!ledBrightnessSlider.locked) {
+            ledBrightnessSlider.setValue(ledBrightness);
+          }
+        } else if (data.startsWith("LED2:BRIGHTNESS:")) {
+          ledBrightness = int(data.substring(16));
+          if (!ledBrightnessSlider.locked) {
+            ledBrightnessSlider.setValue(ledBrightness);
+          }
+        } else if (data.startsWith("LED:PIN:")) {
+          ledDataPin = int(data.substring(8));
+        } else if (data.startsWith("LED2:PIN:")) {
+          ledDataPin2 = int(data.substring(9));
         }
       }
     }
@@ -2092,7 +2216,13 @@ void createUI() {
   pirCooldownSlider = new Slider(990, 670, 200, 20, 1000, 30000);
   pirCooldownSlider.setValue(5000);
 
-  ledBlinkButton = new Button(1260, 692, 120, 40, "Blink", LED_BUTTON_COLOR);
+  ledBrightnessSlider = new Slider(1310, 697, 150, 16, 0, 255);
+  ledBrightnessSlider.setValue(255);
+
+  ledOffButton = new Button(1230, 730, 75, 32, "Off", color(230));
+  ledSteadyButton = new Button(1315, 730, 75, 32, "Steady", LED_BUTTON_COLOR);
+  ledBlinkButton = new Button(1400, 730, 75, 32, "Blink", LED_BUTTON_COLOR);
+  ledInvertButton = new Button(1230, 766, 245, 30, "Invert Blink: OFF", color(230));
 }
 
 void drawServoControl(int servoNum) {
