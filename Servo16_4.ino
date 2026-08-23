@@ -28,6 +28,9 @@ SOFTWARE.
  * PIR sensor integration for motion-triggered sequences
  * Two independently-pinned LEDs, digital on/off control (blink timing lives in the app)
  * PIR and both LED data pins are configurable at runtime via serial commands
+ * NEW: Per-LED brightness control (LED:BRIGHTNESS:x / LED2:BRIGHTNESS:x, 0-255)
+ *      Requires a PWM-capable pin (3,5,6,9,10,11 on Uno) for true fading -
+ *      on a non-PWM pin the value is just thresholded to on/off by the core. 8/23/2026
  */
 
 #include <Wire.h>
@@ -51,11 +54,13 @@ unsigned long pirTriggerTime = 0;
 unsigned long pirCooldownPeriod = 5000;  // 5 seconds cooldown between triggers
 bool pirSequencePlaying = false;
 
-// LED Configuration (digital on/off - blink timing is handled by the app)
-int ledPin = 13;  // Digital pin for LED 1 (change via LED:PIN:x command)
+// LED Configuration (blink timing is handled by the app; brightness sets the "on" level)
+int ledPin = 10;  // Digital pin for LED 1 (change via LED:PIN:x command)
 bool ledState = false;
-int led2Pin = 12;  // Digital pin for LED 2 (change via LED2:PIN:x command)
+int ledBrightness = 255;  // 0-255, applied whenever the LED is ON
+int led2Pin = 11;  // Digital pin for LED 2 (change via LED2:PIN:x command)
 bool led2State = false;
+int led2Brightness = 255;  // 0-255, applied whenever LED 2 is ON
 
 // Servo positions (0-180 degrees)
 int servoPositions[NUM_SERVOS];
@@ -343,20 +348,32 @@ void processCommand() {
     // LED 1 control commands
     if (inputString.equals("LED:ON")) {
       ledState = true;
-      digitalWrite(ledPin, HIGH);
+      analogWrite(ledPin, ledBrightness);
     }
     else if (inputString.equals("LED:OFF")) {
       ledState = false;
-      digitalWrite(ledPin, LOW);
+      analogWrite(ledPin, 0);
+    }
+    else if (inputString.startsWith("LED:BRIGHTNESS:")) {
+      // Set LED 1 brightness: LED:BRIGHTNESS:0-255
+      int brightness = inputString.substring(15).toInt();
+      if (brightness >= 0 && brightness <= 255) {
+        ledBrightness = brightness;
+        if (ledState) {
+          analogWrite(ledPin, ledBrightness);  // live preview if already on
+        }
+        Serial.print("LED:BRIGHTNESS:");
+        Serial.println(ledBrightness);
+      }
     }
     else if (inputString.startsWith("LED:PIN:")) {
       // Set LED 1 data pin: LED:PIN:pinNumber
       int newPin = inputString.substring(8).toInt();
       if (newPin >= 0 && newPin <= 53) {
-        digitalWrite(ledPin, LOW);  // leave the old pin in a known state
+        analogWrite(ledPin, 0);  // leave the old pin in a known state
         ledPin = newPin;
         pinMode(ledPin, OUTPUT);
-        digitalWrite(ledPin, ledState ? HIGH : LOW);
+        analogWrite(ledPin, ledState ? ledBrightness : 0);
         Serial.print("LED:PIN:");
         Serial.println(ledPin);
       }
@@ -366,20 +383,32 @@ void processCommand() {
     // LED 2 control commands
     if (inputString.equals("LED2:ON")) {
       led2State = true;
-      digitalWrite(led2Pin, HIGH);
+      analogWrite(led2Pin, led2Brightness);
     }
     else if (inputString.equals("LED2:OFF")) {
       led2State = false;
-      digitalWrite(led2Pin, LOW);
+      analogWrite(led2Pin, 0);
+    }
+    else if (inputString.startsWith("LED2:BRIGHTNESS:")) {
+      // Set LED 2 brightness: LED2:BRIGHTNESS:0-255
+      int brightness = inputString.substring(16).toInt();
+      if (brightness >= 0 && brightness <= 255) {
+        led2Brightness = brightness;
+        if (led2State) {
+          analogWrite(led2Pin, led2Brightness);  // live preview if already on
+        }
+        Serial.print("LED2:BRIGHTNESS:");
+        Serial.println(led2Brightness);
+      }
     }
     else if (inputString.startsWith("LED2:PIN:")) {
       // Set LED 2 data pin: LED2:PIN:pinNumber
       int newPin = inputString.substring(9).toInt();
       if (newPin >= 0 && newPin <= 53) {
-        digitalWrite(led2Pin, LOW);  // leave the old pin in a known state
+        analogWrite(led2Pin, 0);  // leave the old pin in a known state
         led2Pin = newPin;
         pinMode(led2Pin, OUTPUT);
-        digitalWrite(led2Pin, led2State ? HIGH : LOW);
+        analogWrite(led2Pin, led2State ? led2Brightness : 0);
         Serial.print("LED2:PIN:");
         Serial.println(led2Pin);
       }
@@ -435,8 +464,12 @@ void sendAllData() {
   // Send LED status
   Serial.print("LED:PIN:");
   Serial.println(ledPin);
+  Serial.print("LED:BRIGHTNESS:");
+  Serial.println(ledBrightness);
   Serial.print("LED2:PIN:");
   Serial.println(led2Pin);
+  Serial.print("LED2:BRIGHTNESS:");
+  Serial.println(led2Brightness);
 }
 
 // Serial event handler
